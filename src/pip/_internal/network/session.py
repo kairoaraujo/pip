@@ -256,6 +256,7 @@ class PipSession(requests.Session):
         *args,  # type: Any
         retries=0,  # type: int
         cache=None,  # type: Optional[str]
+        datadir=None,  # type: Optional[]
         trusted_hosts=(),  # type: Sequence[str]
         index_urls=None,  # type: Optional[List[str]]
         **kwargs,  # type: Any
