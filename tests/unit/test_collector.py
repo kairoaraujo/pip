@@ -788,7 +788,7 @@ class TestLinkCollector:
 
         location = Link(url, cache_link_parsing=False)
         link_collector = make_test_link_collector()
-        actual = link_collector.fetch_page(location)
+        actual = link_collector.fetch_project_page(location)
 
         assert actual is not None
         assert actual.content == fake_response.content

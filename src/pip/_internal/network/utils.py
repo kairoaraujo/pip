@@ -1,8 +1,10 @@
-from typing import Dict, Generator
+from typing import Dict, Generator, Optional
+import logging
 
 from pip._vendor.requests.models import CONTENT_CHUNK_SIZE, Response
 
 from pip._internal.exceptions import NetworkConnectionError
+from pip._internal.network.cache import is_from_cache
 
 # The following comments and HTTP headers were originally added by
 # Donald Stufft in git commit 22c562429a61bb77172039e480873fb239dd8c03.
@@ -94,3 +96,28 @@ def response_chunks(
             if not chunk:
                 break
             yield chunk
+
+
+def should_show_progress(response, loglevel):
+    # type: (Response, int) -> bool
+    total_length = get_http_response_size(response)
+
+    if loglevel > logging.INFO:
+        show_progress = False
+    elif is_from_cache(response):
+        show_progress = False
+    elif not total_length:
+        show_progress = True
+    elif total_length > (40 * 1000):
+        show_progress = True
+    else:
+        show_progress = False
+    return show_progress
+
+
+def get_http_response_size(resp):
+    # type: (Response) -> Optional[int]
+    try:
+        return int(resp.headers['content-length'])
+    except (ValueError, KeyError, TypeError):
+        return None

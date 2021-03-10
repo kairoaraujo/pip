@@ -11,6 +11,7 @@ from pip._internal.utils.virtualenv import running_under_virtualenv
 
 # Application Directories
 USER_CACHE_DIR = appdirs.user_cache_dir("pip")
+USER_DATA_DIR = appdirs.user_data_dir("pip")
 
 # FIXME doesn't account for venv linked to global site-packages
 site_packages: typing.Optional[str] = sysconfig.get_path("purelib")

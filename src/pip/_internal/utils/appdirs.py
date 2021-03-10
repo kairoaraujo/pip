@@ -38,6 +38,11 @@ def user_config_dir(appname: str, roaming: bool = True) -> str:
     return _appdirs.user_config_dir(appname, appauthor=False, roaming=roaming)
 
 
+def user_data_dir(appname):
+    # type: (str) -> str
+    return _appdirs.user_data_dir(appname)
+
+
 # for the discussion regarding site_config_dir locations
 # see <https://github.com/pypa/pip/issues/1733>
 def site_config_dirs(appname: str) -> List[str]:
