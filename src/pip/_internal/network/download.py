@@ -14,7 +14,13 @@ from pip._internal.models.index import PyPI
 from pip._internal.models.link import Link
 from pip._internal.network.cache import is_from_cache
 from pip._internal.network.session import PipSession
-from pip._internal.network.utils import HEADERS, raise_for_status, response_chunks
+from pip._internal.network.utils import (
+    HEADERS,
+    get_http_response_size,
+    raise_for_status,
+    response_chunks,
+    should_show_progress,
+)
 from pip._internal.utils.misc import format_size, redact_auth_from_url, splitext
 
 logger = logging.getLogger(__name__)
@@ -33,6 +39,13 @@ def _prepare_download(
     progress_bar: str,
 ) -> Iterable[bytes]:
     total_length = _get_http_response_size(resp)
+def _prepare_download(
+    resp: Response,
+    link: Link,
+    progress_bar: str,
+):
+    # type: (...) -> Iterable[bytes]
+    total_length = get_http_response_size(resp)
 
     if link.netloc == PyPI.file_storage_domain:
         url = link.show_url
@@ -49,20 +62,9 @@ def _prepare_download(
     else:
         logger.info("Downloading %s", logged_url)
 
-    if logger.getEffectiveLevel() > logging.INFO:
-        show_progress = False
-    elif is_from_cache(resp):
-        show_progress = False
-    elif not total_length:
-        show_progress = True
-    elif total_length > (40 * 1000):
-        show_progress = True
-    else:
-        show_progress = False
-
     chunks = response_chunks(resp, CONTENT_CHUNK_SIZE)
 
-    if not show_progress:
+    if not should_show_progress(resp, logger.getEffectiveLevel()):
         return chunks
 
     renderer = get_download_progress_renderer(bar_type=progress_bar, size=total_length)
@@ -130,23 +132,37 @@ class Downloader:
 
     def __call__(self, link: Link, location: str) -> Tuple[str, str]:
         """Download the file given by link into location."""
-        try:
-            resp = _http_get_download(self._session, link)
-        except NetworkConnectionError as e:
-            assert e.response is not None
-            logger.critical(
-                "HTTP error %s while getting %s", e.response.status_code, link
+
+        # Does the Link come from a SecureRepository?
+        if link.comes_from is not None:
+            index = str(link.comes_from)
+            secure_repo, _ = (
+                self._session.secure_repository_manager.get_secure_repository(index)
             )
-            raise
 
-        filename = _get_http_response_filename(resp, link)
-        filepath = os.path.join(location, filename)
+        if secure_repo:
+            logger.debug("SecureRepository found for %s", link)
+            filepath = secure_repo.download_distribution(link, location, self._progress_bar)
+            content_type = mimetypes.guess_type(filepath)[0] or ''
+        else:
+            try:
+                resp = _http_get_download(self._session, link)
+            except NetworkConnectionError as e:
+                assert e.response is not None
+                logger.critical(
+                    "HTTP error %s while getting %s", e.response.status_code, link
+                )
+                raise
 
-        chunks = _prepare_download(resp, link, self._progress_bar)
-        with open(filepath, "wb") as content_file:
-            for chunk in chunks:
-                content_file.write(chunk)
-        content_type = resp.headers.get("Content-Type", "")
+            filename = _get_http_response_filename(resp, link)
+            filepath = os.path.join(location, filename)
+
+            chunks = _prepare_download(resp, link, self._progress_bar)
+            with open(filepath, 'wb') as content_file:
+                for chunk in chunks:
+                    content_file.write(chunk)
+            content_type = resp.headers.get('Content-Type', '')
+
         return filepath, content_type
 
 

@@ -20,4 +20,6 @@ setuptools==44.0.0
 six==1.16.0
 tenacity==8.0.1
 tomli==2.0.1
+git+https://github.com/theupdateframework/tuf.git#egg=tuf
+    securesystemslib==0.20.0
 webencodings==0.5.1
