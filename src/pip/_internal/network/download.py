@@ -4,9 +4,14 @@ import cgi
 import logging
 import mimetypes
 import os
+import shutil
 from typing import Iterable, Optional, Tuple
 
+from pip._vendor.requests.exceptions import HTTPError
 from pip._vendor.requests.models import CONTENT_CHUNK_SIZE, Response
+from pip._vendor.tuf.client.fetcher import FetcherInterface
+from pip._vendor.tuf.exceptions import FetcherHTTPError, SlowRetrievalError
+from pip._vendor.urllib3.exceptions import ReadTimeoutError
 
 from pip._internal.cli.progress_bars import DownloadProgressProvider
 from pip._internal.exceptions import NetworkConnectionError
@@ -136,27 +141,41 @@ class Downloader:
         # type: (...) -> None
         self._session = session
         self._progress_bar = progress_bar
+        # TODO make sure our fetcher knows about the progress bar...
 
     def __call__(self, link, location):
         # type: (Link, str) -> Tuple[str, str]
         """Download the file given by link into location."""
-        try:
-            resp = _http_get_download(self._session, link)
-        except NetworkConnectionError as e:
-            assert e.response is not None
-            logger.critical(
-                "HTTP error %s while getting %s", e.response.status_code, link
-            )
-            raise
 
-        filename = _get_http_response_filename(resp, link)
-        filepath = os.path.join(location, filename)
+        # Does the Link come from a SecureRepository?
+        secure_repo, _ = (
+            self._session.secure_repository_manager.get_secure_repository(link.comes_from)
+        )
+        if secure_repo:
+            logger.debug("SecureRepository found for %s", link)
+            cached_path = secure_repo.download_distribution(link)
+            content_type = mimetypes.guess_type(cached_path)[0]
+            filepath = shutil.copy(cached_path, location)
 
-        chunks = _prepare_download(resp, link, self._progress_bar)
-        with open(filepath, 'wb') as content_file:
-            for chunk in chunks:
-                content_file.write(chunk)
-        content_type = resp.headers.get('Content-Type', '')
+        else:
+            try:
+                resp = _http_get_download(self._session, link)
+            except NetworkConnectionError as e:
+                assert e.response is not None
+                logger.critical(
+                    "HTTP error %s while getting %s", e.response.status_code, link
+                )
+                raise
+
+            filename = _get_http_response_filename(resp, link)
+            filepath = os.path.join(location, filename)
+
+            chunks = _prepare_download(resp, link, self._progress_bar)
+            with open(filepath, 'wb') as content_file:
+                for chunk in chunks:
+                    content_file.write(chunk)
+            content_type = resp.headers.get('Content-Type', '')
+
         return filepath, content_type
 
 
