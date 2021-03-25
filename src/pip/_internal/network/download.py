@@ -19,18 +19,16 @@ from pip._internal.models.index import PyPI
 from pip._internal.models.link import Link
 from pip._internal.network.cache import is_from_cache
 from pip._internal.network.session import PipSession
-from pip._internal.network.utils import HEADERS, raise_for_status, response_chunks
+from pip._internal.network.utils import (
+    HEADERS,
+    get_http_response_size,
+    raise_for_status,
+    response_chunks,
+    should_show_progress,
+)
 from pip._internal.utils.misc import format_size, redact_auth_from_url, splitext
 
 logger = logging.getLogger(__name__)
-
-
-def _get_http_response_size(resp):
-    # type: (Response) -> Optional[int]
-    try:
-        return int(resp.headers['content-length'])
-    except (ValueError, KeyError, TypeError):
-        return None
 
 
 def _prepare_download(
@@ -39,7 +37,7 @@ def _prepare_download(
     progress_bar  # type: str
 ):
     # type: (...) -> Iterable[bytes]
-    total_length = _get_http_response_size(resp)
+    total_length = get_http_response_size(resp)
 
     if link.netloc == PyPI.file_storage_domain:
         url = link.show_url
@@ -56,20 +54,9 @@ def _prepare_download(
     else:
         logger.info("Downloading %s", logged_url)
 
-    if logger.getEffectiveLevel() > logging.INFO:
-        show_progress = False
-    elif is_from_cache(resp):
-        show_progress = False
-    elif not total_length:
-        show_progress = True
-    elif total_length > (40 * 1000):
-        show_progress = True
-    else:
-        show_progress = False
-
     chunks = response_chunks(resp, CONTENT_CHUNK_SIZE)
 
-    if not show_progress:
+    if not should_show_progress(resp, logger.getEffectiveLevel()):
         return chunks
 
     return DownloadProgressProvider(
