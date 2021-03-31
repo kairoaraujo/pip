@@ -9,6 +9,8 @@ import os
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
+from pip._vendor.requests import Session
+
 from pip._vendor.tuf import settings as tuf_settings
 from pip._vendor.tuf.exceptions import (
     MissingLocalRepositoryError,
@@ -20,6 +22,7 @@ from pip._vendor.tuf.client.updater import Updater
 
 from pip._internal.exceptions import ConfigurationError, NetworkConnectionError
 from pip._internal.models.link import Link
+from pip._internal.network.secure_fetcher import PipFetcher
 from pip._internal.utils.temp_dir import TempDirectory
 
 logger = logging.getLogger(__name__)
@@ -30,8 +33,8 @@ class SecureRepository:
     metadata for. Provides methods to securely download distribution
     and index files from the remote repository."""
 
-    def __init__(self, index_url):
-        # type: (str) -> None
+    def __init__(self, index_url, fetcher):
+        # type: (str, PipFetcher) -> None
 
         # Construct unique directory name based on the url
         dir_name = hashlib.sha224(index_url.encode('utf-8')).hexdigest()
@@ -65,7 +68,7 @@ class SecureRepository:
             }
         }
 
-        self._updater = Updater(dir_name, self._index_mirrors)
+        self._updater = Updater(dir_name, self._index_mirrors, fetcher)
         self._refreshed = False
         # TODO how should this TempDir be handled?
         self._tmp_dir = TempDirectory(globally_managed=True).path
@@ -76,6 +79,9 @@ class SecureRepository:
         file or None if download did not succeed."""
 
         try:
+            # No progress notification for metadata or index downloads
+            self._set_progress_bar("off")
+
             self._ensure_fresh_metadata()
 
             self._updater.mirrors = self._index_mirrors
@@ -101,8 +107,8 @@ class SecureRepository:
             logger.warning("Failed to download index for %s: %s", project_name, e)
             return None
 
-    def download_distribution(self, link, location):
-        # type: (Link, str) -> str
+    def download_distribution(self, link, location, progress_bar):
+        # type: (Link, str, str) -> str
         """Securely download distribution file into 'location'.
         Return path to downloaded file (note that path may include
         new subdirectories under 'location')."""
@@ -110,6 +116,9 @@ class SecureRepository:
         # Raises NetworkConnectionError, ?
         # TODO do we need to double check that comes_from matches our index_url?
         try:
+            # No progress notification for metadata downloads
+            self._set_progress_bar("off")
+
             self._ensure_fresh_metadata()
 
             base_url, target_name = self._split_distribution_url(link)
@@ -122,6 +131,7 @@ class SecureRepository:
             target = self._updater.get_one_valid_targetinfo(target_name)
 
             if self._updater.updated_targets([target], location):
+                self._set_progress_bar(progress_bar)
                 logger.info("Downloading %s", logname)
                 self._updater.download_target(
                     target, location, prefix_filename_with_hash=False
@@ -135,6 +145,10 @@ class SecureRepository:
             # This is close but not strictly speaking always true: there might
             # be other reasons for NoWorkingMirror than Network issues
             raise NetworkConnectionError(e)
+
+    def _set_progress_bar(self, progress_bar):
+        # type: (str) -> None
+        self._updater.fetcher.progress_bar = progress_bar
 
     def _ensure_fresh_metadata(self):
         # type: () -> None
@@ -194,8 +208,8 @@ class SecureRepositoryManager:
         "http://localhost:8000/simple/",
     ]
 
-    def __init__(self, index_urls, data_dir:
-        # type: (Optional[List[str]], Optional[str], Optional[str]) -> None
+    def __init__(self, index_urls, data_dir, session):
+        # type: (Optional[List[str]], Optional[str], Session) -> None
 
         logger.debug("Initializing SecureRepositoryManager")
 
@@ -211,6 +225,7 @@ class SecureRepositoryManager:
 
         self._repositories = self._initialize_repositories(
             index_urls,
+            session
         )
 
     def get_secure_repository(self, project_url):
@@ -242,18 +257,19 @@ class SecureRepositoryManager:
         pass
 
     @staticmethod
-    def _initialize_repositories(index_urls):
-        # type (Optional[List[str]]) -> Dict[str, SecureRepository]
+    def _initialize_repositories(index_urls, session):
+        # type (Optional[List[str]], Session) -> Dict[str, SecureRepository]
 
         """Return a Dictionary of Repositories: one repository per index url
         but only if we found local metadata for that index url. """
 
         repositories = {}
+        fetcher = PipFetcher(session)
 
         for index_url in index_urls or []:
             index_url = SecureRepositoryManager._canonicalize_url(index_url)
             try:
-                repository = SecureRepository(index_url)
+                repository = SecureRepository(index_url, fetcher)
                 repositories[index_url] = repository
                 logger.debug('Secure repository initialized for %s', index_url)
             except MissingLocalRepositoryError:

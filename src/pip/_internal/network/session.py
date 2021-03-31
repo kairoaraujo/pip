@@ -336,6 +336,7 @@ class PipSession(requests.Session):
         self.secure_repository_manager = SecureRepositoryManager(
             index_urls=index_urls,
             data_dir=datadir,
+            session=self,
         )
 
 
