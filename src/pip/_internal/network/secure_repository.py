@@ -6,6 +6,7 @@ repository (e.g. PyPI) is cryptographically signed.
 import hashlib
 import logging
 import os
+import shutil
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
@@ -250,11 +251,31 @@ class SecureRepositoryManager:
 
         return (repository, project)
 
-    def _bootstrap_metadata(self, tuf_metadata_dir):
+    # Bootstrap the TUF metadata with metadata shipped with pip
+    # (only if that TUF metadata does not exist yet).
+    # Raises OSErrors like FileExistsError
+    # TODO: handle failures better: e.g. if bootstrap fails somehow, maybe remove the directory
+    def _bootstrap_metadata(self, metadata_dir):
         # type: (str) -> None
+        bootstrapdir = os.path.join(
+            os.path.dirname(__file__),
+            "secure_repository_bootstrap"
+        )
 
-        # TODO
-        pass
+        for bootstrap in os.listdir(bootstrapdir):
+            # check if metadata matching this name already exists
+            dirname = os.path.join(metadata_dir, bootstrap)
+            if os.path.exists(dirname):
+                continue
+
+            # create the structure TUF expects
+            logger.debug("Bootstrapping TUF metadata for {}".format(bootstrap))
+            os.makedirs(os.path.join(dirname, "metadata", "current"))
+            os.mkdir(os.path.join(dirname, "metadata", "previous"))
+            shutil.copyfile(
+                os.path.join(bootstrapdir, bootstrap, "root.json"),
+                os.path.join(dirname, "metadata", "current", "root.json")
+            )
 
     @staticmethod
     def _initialize_repositories(index_urls, session):
