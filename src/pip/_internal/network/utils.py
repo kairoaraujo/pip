@@ -96,6 +96,7 @@ def response_chunks(response, chunk_size=CONTENT_CHUNK_SIZE):
                 break
             yield chunk
 
+
 def should_show_progress(response, loglevel):
     # type: (Response, int) -> bool
     total_length = get_http_response_size(response)
@@ -112,10 +113,10 @@ def should_show_progress(response, loglevel):
         show_progress = False
     return show_progress
 
+
 def get_http_response_size(resp):
     # type: (Response) -> Optional[int]
     try:
         return int(resp.headers['content-length'])
     except (ValueError, KeyError, TypeError):
         return None
-

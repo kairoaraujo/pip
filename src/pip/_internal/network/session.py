@@ -257,7 +257,7 @@ class PipSession(requests.Session):
         *args,  # type: Any
         retries=0,  # type: int
         cache=None,  # type: Optional[str]
-        datadir=None,  # type: Optional[]
+        datadir=None,  # type: Optional[str]
         trusted_hosts=(),  # type: Sequence[str]
         index_urls=None,  # type: Optional[List[str]]
         **kwargs,  # type: Any
@@ -338,7 +338,6 @@ class PipSession(requests.Session):
             data_dir=datadir,
             session=self,
         )
-
 
     def update_index_urls(self, new_index_urls):
         # type: (List[str]) -> None

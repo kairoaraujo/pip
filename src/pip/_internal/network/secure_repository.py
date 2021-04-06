@@ -11,15 +11,14 @@ import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
 from pip._vendor.requests import Session
-
 from pip._vendor.tuf import settings as tuf_settings
+from pip._vendor.tuf.client.updater import Updater
 from pip._vendor.tuf.exceptions import (
     MissingLocalRepositoryError,
     NoWorkingMirrorError,
     RepositoryError,
-    UnknownTargetError
+    UnknownTargetError,
 )
-from pip._vendor.tuf.client.updater import Updater
 
 from pip._internal.exceptions import ConfigurationError, NetworkConnectionError
 from pip._internal.models.link import Link
@@ -269,7 +268,7 @@ class SecureRepositoryManager:
                 continue
 
             # create the structure TUF expects
-            logger.debug("Bootstrapping TUF metadata for {}".format(bootstrap))
+            logger.debug("Bootstrapping TUF metadata for '%s'", bootstrap)
             os.makedirs(os.path.join(dirname, "metadata", "current"))
             os.mkdir(os.path.join(dirname, "metadata", "previous"))
             shutil.copyfile(
@@ -279,7 +278,7 @@ class SecureRepositoryManager:
 
     @staticmethod
     def _initialize_repositories(index_urls, session):
-        # type (Optional[List[str]], Session) -> Dict[str, SecureRepository]
+        # type: (Optional[List[str]], Session) -> Dict[str, SecureRepository]
 
         """Return a Dictionary of Repositories: one repository per index url
         but only if we found local metadata for that index url. """
