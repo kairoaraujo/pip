@@ -132,7 +132,6 @@ class Downloader:
 
     def __call__(self, link: Link, location: str) -> Tuple[str, str]:
         """Download the file given by link into location."""
-
         # Does the Link come from a SecureRepository?
         if link.comes_from is not None:
             index = str(link.comes_from)

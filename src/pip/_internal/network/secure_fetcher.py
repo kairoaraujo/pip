@@ -4,10 +4,10 @@ from typing import Iterable
 from pip._vendor.requests import Session
 from pip._vendor.requests.exceptions import HTTPError
 from pip._vendor.requests.models import CONTENT_CHUNK_SIZE, Response
-from pip._vendor.tuf.client.fetcher import FetcherInterface
-from pip._vendor.tuf.exceptions import FetcherHTTPError
+from pip._vendor.tuf.ngclient.fetcher import FetcherInterface
+from pip._vendor.tuf.api.exceptions import DownloadHTTPError
 
-from pip._internal.cli.progress_bars import DownloadProgressProvider
+from pip._internal.cli.progress_bars import get_download_progress_renderer
 from pip._internal.network.utils import response_chunks, should_show_progress
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class PipFetcher(FetcherInterface):
         # default value: caller should change this as needed
         self.progress_bar = "on"
 
-    def fetch(self, url, required_length):
+    def fetch(self, url):
         # type: (str, int) -> Iterable[bytes]
 
         # TODO set headers, maybe reuse download._http_get_download()?
@@ -33,13 +33,13 @@ class PipFetcher(FetcherInterface):
             response.raise_for_status()
         except HTTPError as e:
             status = e.response.status_code
-            raise FetcherHTTPError(str(e), status)
+            raise DownloadHTTPError(str(e), status)
 
         # TODO reuse code in download._prepare_download()?
         chunks = response_chunks(response, CONTENT_CHUNK_SIZE)
         if not should_show_progress(response, logger.getEffectiveLevel()):
             return chunks
 
-        return DownloadProgressProvider(
-            self.progress_bar, max=required_length
+        return get_download_progress_renderer(
+            self.progress_bar
         )(chunks)

@@ -56,13 +56,6 @@ drop = [
   '^pygments/lexers/(?!python|__init__|_mapping).*\.py$',
   # trim rich's markdown support
   "rich/markdown.py",
-  # tuf parts that are not needed by the client
-  "tuf/api/*",
-  "tuf/scripts/*",
-  "tuf/developer_tool.py",
-  "tuf/repository_tool.py",
-  "tuf/repository_lib.py",
-  "tuf/unittest_toolbox.py",
   # securesystemslib gpg support and some individual files are not needed
   "securesystemslib/gpg/*",
   "securesystemslib/unittest_toolbox.py",
