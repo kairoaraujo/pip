@@ -11,13 +11,12 @@ import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
 from pip._vendor.requests import Session
-from pip._vendor.tuf import settings as tuf_settings
-from pip._vendor.tuf.client.updater import Updater
-from pip._vendor.tuf.exceptions import (
-    MissingLocalRepositoryError,
-    NoWorkingMirrorError,
+from pip._vendor.tuf.ngclient.updater import Updater, UpdaterConfig
+from pip._vendor.tuf.ngclient.fetcher import FetcherInterface
+from pip._vendor.tuf.api.exceptions import (
     RepositoryError,
-    UnknownTargetError,
+    UnsignedMetadataError,
+    DownloadError,
 )
 
 from pip._internal.exceptions import ConfigurationError, NetworkConnectionError
@@ -33,28 +32,31 @@ class SecureRepository:
     metadata for. Provides methods to securely download distribution
     and index files from the remote repository."""
 
-    def __init__(self, index_url, fetcher):
-        # type: (str, PipFetcher) -> None
+    def __init__(
+        self, index_url: str, fetcher: FetcherInterface, tuf_metadata_dir: str
+    )-> None:
 
         # Construct unique directory name based on the url
         dir_name = hashlib.sha224(index_url.encode('utf-8')).hexdigest()
-
         split_url = urllib.parse.urlsplit(index_url)
-        base_url = urllib.parse.urlunsplit(
+        self._base_url = urllib.parse.urlunsplit(
             [split_url.scheme, split_url.netloc, '', '', '']
         )
 
         # targets_path contains index files (for PyPI: "simple/")
         targets_path = split_url.path.lstrip('/')
 
+        # local metadata dir
+        metadata_dir = os.path.join(tuf_metadata_dir, dir_name, "metadata")
+        metadata_base_url = f"{self._base_url}/metadata/"
         # Store two separate mirror configs. First one is used when downloading index
         # files: in this case both metadata_path and target_path are set.
         # TODO: metadata_path resolution is still open:
-        # https://github.com/jku/pip/issues/5
+        # https://github. com/jku/pip/issues/5
         self._index_mirrors = {
-            base_url: {
-                'url_prefix': base_url,
-                'metadata_path': 'tuf/',
+            self._base_url: {
+                'url_prefix': self._base_url,
+                'metadata_path': 'simple/',
                 'targets_path': targets_path,
             }
         }
@@ -62,48 +64,53 @@ class SecureRepository:
         # in this case only metadata_path is set. Before downloading an additional
         # distribution mirror will be added to this configuration
         self._distribution_mirrors = {
-            base_url: {
-                'url_prefix': base_url,
-                'metadata_path': 'tuf/',
+            self._base_url: {
+                'url_prefix': self._base_url,
+                'metadata_path': 'simple/',
             }
         }
 
-        self._updater = Updater(dir_name, self._index_mirrors, fetcher)
-        self._refreshed = False
         # TODO how should this TempDir be handled?
         self._tmp_dir = TempDirectory(globally_managed=True).path
+
+        # TODO not clear how to handle distribution mirrors here
+        self._updater = Updater(
+            metadata_dir=metadata_dir,
+            metadata_base_url=metadata_base_url,
+        )
+        self._refreshed = False
 
     def download_index(self, project_name):
         # type: (str) -> Optional[bytes]
         """Securely download project index file. Return content of the
         file or None if download did not succeed."""
-
         try:
             # No progress notification for metadata or index downloads
             self._set_progress_bar("off")
 
             self._ensure_fresh_metadata()
 
-            self._updater.mirrors = self._index_mirrors
-
-            # TODO warehouse setup for hashed index files is still undecided:
-            # https://github.com/jku/pip/issues/14
-            # https://github.com/pypa/warehouse/issues/8487
-            # this code currently assumes /simple/{PROJECT}/{HASH}.index.html
-            target_name = project_name + "/index.html"
+            target_name = f"{project_name}/{project_name}.html"
             # Fetch the target metadata. If needed, fetch target as well
-            target = self._updater.get_one_valid_targetinfo(target_name)
-            if self._updater.updated_targets([target], self._tmp_dir):
-                self._updater.download_target(target, self._tmp_dir)
+            target = self._updater.get_targetinfo(target_name)
+            if target is None:
+                logger.debug(f"Failed to download index for {project_name}")
+                return None
 
-            with open(os.path.join(self._tmp_dir, target_name), "rb") as f:
+            self._updater.config = UpdaterConfig(prefix_targets_with_hash=True)
+            path = self._updater.download_target(
+                target,
+                filepath=os.path.join(self._tmp_dir, project_name),
+                target_base_url=f"{self._base_url}/simple/"
+            )
+
+            with open(path, "rb") as f:
                 return f.read()
 
-        except UnknownTargetError:
-            # This happens if e.g. project does not exist
-            logger.debug("Index for %s not found", project_name)
-            return None
-        except NoWorkingMirrorError as e:
+        except RepositoryError as e:
+            raise RecursionError(e)
+
+        except DownloadError as e:
             logger.warning("Failed to download index for %s: %s", project_name, e)
             return None
 
@@ -123,32 +130,42 @@ class SecureRepository:
 
             base_url, target_name = self._split_distribution_url(link)
             self._ensure_distribution_mirror_config(base_url)
-            self._updater.mirrors = self._distribution_mirrors
 
             # fetch target metadata. If needed, fetch target
             logger.debug("Fetching metadata for %s", target_name)
-            logname = target_name.split('/')[-1]
-            target = self._updater.get_one_valid_targetinfo(target_name)
+            self._updater.config = UpdaterConfig(prefix_targets_with_hash=False)
+            target = self._updater.get_targetinfo(target_name)
+            if target is None:
+                logger.debug(f"Failed to download index for {target_name}")
+                return None
+            path = self._updater.download_target(
+                target,
+                filepath=os.path.join(location, target_name.split("/")[-1]),
+                target_base_url=f"{self._base_url}/packages/"
+            )
 
-            if self._updater.updated_targets([target], location):
-                self._set_progress_bar(progress_bar)
-                logger.info("Downloading %s", logname)
-                self._updater.download_target(
-                    target, location, prefix_filename_with_hash=False
-                )
-            else:
-                logger.info("Already downloaded %s", logname)
+            #target = self._updater.get_one_valid_targetinfo(target_name)
 
-            return os.path.join(location, target_name)
+            # if self._updater.updated_targets([target], location):
+            #     #self._set_progress_bar(progress_bar)
+            #     logger.info("Downloading %s", target_name)
+            #     self._updater.download_target(
+            #         target, location, prefix_filename_with_hash=False
+            #     )
+            # else:
+            #     logger.info("Already downloaded %s", target)
 
-        except NoWorkingMirrorError as e:
-            # This is close but not strictly speaking always true: there might
-            # be other reasons for NoWorkingMirror than Network issues
-            raise NetworkConnectionError(e)
+            return path
+
+        except UnsignedMetadataError as e:
+            raise UnsignedMetadataError(e)
+
+        except RepositoryError as e:
+            raise RepositoryError(e)
 
     def _set_progress_bar(self, progress_bar):
         # type: (str) -> None
-        self._updater.fetcher.progress_bar = progress_bar
+        self._updater._fetcher.progress_bar = progress_bar
 
     def _ensure_fresh_metadata(self):
         # type: () -> None
@@ -221,11 +238,12 @@ class SecureRepositoryManager:
         # Bootstrap metadata with installed metadata (if not done already)
         self._bootstrap_metadata(tuf_metadata_dir)
 
-        tuf_settings.repositories_directory = tuf_metadata_dir
+        # tuf_settings.repositories_directory = tuf_metadata_dir
 
         self._repositories = self._initialize_repositories(
             index_urls,
-            session
+            session,
+            tuf_metadata_dir,
         )
 
     def get_secure_repository(self, project_url):
@@ -254,8 +272,7 @@ class SecureRepositoryManager:
     # (only if that TUF metadata does not exist yet).
     # Raises OSErrors like FileExistsError
     # TODO: handle failures better: e.g. if bootstrap fails somehow, maybe remove the directory
-    def _bootstrap_metadata(self, metadata_dir):
-        # type: (str) -> None
+    def _bootstrap_metadata(self, metadata_dir: str) -> None:
         bootstrapdir = os.path.join(
             os.path.dirname(__file__),
             "secure_repository_bootstrap"
@@ -269,16 +286,16 @@ class SecureRepositoryManager:
 
             # create the structure TUF expects
             logger.debug("Bootstrapping TUF metadata for '%s'", bootstrap)
-            os.makedirs(os.path.join(dirname, "metadata", "current"))
-            os.mkdir(os.path.join(dirname, "metadata", "previous"))
+            os.makedirs(os.path.join(dirname, "metadata"))
             shutil.copyfile(
                 os.path.join(bootstrapdir, bootstrap, "root.json"),
-                os.path.join(dirname, "metadata", "current", "root.json")
+                os.path.join(os.path.join(dirname, "metadata"), "root.json")
             )
 
     @staticmethod
-    def _initialize_repositories(index_urls, session):
-        # type: (Optional[List[str]], Session) -> Dict[str, SecureRepository]
+    def _initialize_repositories(
+        index_urls: Optional[List[str]], session: Session, data_dir: str
+    )-> Dict[str, SecureRepository]:
 
         """Return a Dictionary of Repositories: one repository per index url
         but only if we found local metadata for that index url. """
@@ -289,7 +306,7 @@ class SecureRepositoryManager:
         for index_url in index_urls or []:
             index_url = SecureRepositoryManager._canonicalize_url(index_url)
             try:
-                repository = SecureRepository(index_url, fetcher)
+                repository = SecureRepository(index_url, fetcher, data_dir)
                 repositories[index_url] = repository
                 logger.debug('Secure repository initialized for %s', index_url)
             except MissingLocalRepositoryError:

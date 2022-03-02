@@ -1,0 +1,12 @@
+diff --git a/src/pip/_vendor/tuf/ngclient/_internal/requests_fetcher.py b/src/pip/_vendor/tuf/ngclient/_internal/requests_fetcher.py
+index 09f943b2..07562791 100644
+--- a/src/pip/_vendor/tuf/ngclient/_internal/requests_fetcher.py
++++ b/src/pip/_vendor/tuf/ngclient/_internal/requests_fetcher.py
+@@ -11,7 +11,6 @@ from urllib import parse
+
+ # Imports
+ import requests
+-import requests.exceptions
+
+ import tuf
+ from tuf.api import exceptions
